@@ -1,0 +1,15 @@
+func (c *IPUController) Get() {
+    c.Data["Title"] = "InPlace Upgrade Home Page"
+    
+    // Render the sidebar template to a string
+    sidebarContent, err := beego.ExecuteViewPathTemplate(c.Ctx.ResponseWriter, "ipu/sidebar.html", "default_layout", c.Data)
+    if err != nil {
+        beego.Error("Failed to load sidebar: ", err)
+        c.Data["Sidebar"] = "Failed to load sidebar"
+    } else {
+        c.Data["Sidebar"] = sidebarContent
+    }
+    
+    c.Data["Content"] = "Welcome to IPU Page"
+    c.TplName = "layout.html"
+}
