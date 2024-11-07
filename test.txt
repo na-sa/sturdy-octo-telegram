@@ -1,1 +1,47 @@
-d
+<section class="section">
+    <div class="container">
+        <h2 class="title">Collect Details</h2>
+        <form id="detailsForm" action="/submit_details" method="post">
+            <div class="field">
+                <label class="label" for="jira_ticket">Jira Ticket</label>
+                <div class="control">
+                    <input class="input" type="text" id="jira_ticket" name="jira_ticket" placeholder="e.g., BKNM-123" required>
+                </div>
+            </div>
+
+            <div class="field">
+                <label class="label" for="application_id">Application ID</label>
+                <div class="control">
+                    <input class="input" type="text" id="application_id" name="application_id" placeholder="e.g., SATPE" required>
+                </div>
+            </div>
+
+            <div class="field">
+                <label class="label" for="configuration_cr">Configuration CR</label>
+                <div class="control">
+                    <input class="input" type="text" id="configuration_cr" name="configuration_cr" placeholder="e.g., ILHCEV4150G397U" required>
+                </div>
+            </div>
+
+            <div class="field">
+                <label class="label" for="planned_start_date">Planned Start Date</label>
+                <div class="control">
+                    <input class="input" type="datetime-local" id="planned_start_date" name="planned_start_date" required>
+                </div>
+            </div>
+
+            <div class="field">
+                <label class="label" for="planned_end_date">Planned End Date</label>
+                <div class="control">
+                    <input class="input" type="datetime-local" id="planned_end_date" name="planned_end_date" required>
+                </div>
+            </div>
+
+            <div class="field">
+                <div class="control">
+                    <button class="button is-primary" type="submit">Submit</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</section>
