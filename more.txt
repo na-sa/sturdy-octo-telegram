@@ -47,65 +47,60 @@
 
 </section>
 
-<!-- Script -->
 <script>
 document.addEventListener("DOMContentLoaded", function () {
-  const section = document.getElementById("inventorySection");
-  const readinessData = JSON.parse('{{ .ReadinessData | toJson | safeJS }}') || [];
-  let currentPage = Number('{{ .CurrentPage }}') || 1;
-  const totalPages = Number('{{ .TotalPages }}') || 1;
-  const rowsPerPage = 10;
+    const section = document.getElementById("inventorySection");
+    
+    let currentPage = Number('{{ .CurrentPage }}') || 1;
+    const totalPages = Number('{{ .TotalPages }}') || 1;
+    const readinessData = JSON.parse('{{ .ReadinessData | toJson | safeJS }}') || [];
 
-  // Event delegation to handle clicks
-  section.addEventListener("click", function (event) {
-    if (event.target.matches("#prevPage")) {
-      if (currentPage > 1) {
-        currentPage--;
-        renderPage();
-      }
-    } else if (event.target.matches("#nextPage")) {
-      if (currentPage < totalPages) {
-        currentPage++;
-        renderPage();
-      }
+    console.log("Total Pages:", totalPages);
+    console.log("Current Page:", currentPage);
+    console.log("Readiness Data:", readinessData);
+
+    // Event Delegation for Pagination
+    section.addEventListener("click", function (event) {
+        if (event.target.matches("#prevPage") && currentPage > 1) {
+            currentPage--;
+            updatePage();
+        } else if (event.target.matches("#nextPage") && currentPage < totalPages) {
+            currentPage++;
+            updatePage();
+        }
+    });
+
+    // Render the current page and timestamp
+    function updatePage() {
+        console.log(`Switching to page ${currentPage}`);
+        document.getElementById("currentPageDisplay").textContent =
+            `Page ${currentPage} of ${totalPages}`;
+        document.getElementById("timestampValue").textContent =
+            new Date().toLocaleString();
+
+        const rowsPerPage = 10;
+        const start = (currentPage - 1) * rowsPerPage;
+        const end = start + rowsPerPage;
+        const currentPageData = readinessData.slice(start, end);
+
+        const tbody = section.querySelector("table tbody");
+        tbody.innerHTML = ''; // clear existing rows
+
+        currentPageData.forEach(row => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td><input type="checkbox" class="rowCheckbox"/></td>
+                <td>${row.Hostname}</td>
+                <td>${row.Readiness}</td>
+                <td>${row.BigBootRequired}</td>
+                <td><button class="button is-info details-btn">Details</button></td>
+            `;
+            tbody.appendChild(tr);
+        });
     }
-  });
 
-  function renderPage() {
-    // Update page display and timestamp
-    document.getElementById("currentPageDisplay").textContent = `Page ${currentPage} of ${totalPages}`;
-    document.getElementById("timestampValue").textContent = new Date().toLocaleString();
-
-    // Render table rows dynamically based on current page
-    const rowsPerPage = 10;
-    const start = (currentPage - 1) * rowsPerPage;
-    const end = start + rowsPerPage;
-    const currentPageData = readinessData.slice(start, end);
-
-    const tbody = section.querySelector("table tbody");
-    tbody.innerHTML = '';  // Clear existing rows
-
-    if (currentPageData.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5">No data available</td></tr>`;
-    } else {
-      currentPageData.forEach(row => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td><input type="checkbox" class="rowCheckbox"/></td>
-          <td>${row.Hostname}</td>
-          <td>${row.Readiness}</td>
-          <td>${row.BigBootRequired}</td>
-          <td><button class="button is-info details-btn">Details</button></td>
-        `;
-      tbody.appendChild(tr);
-    }
-
-    // Update pagination display text
-    document.getElementById("currentPageDisplay").textContent = `Page ${currentPage} of ${totalPages}`;
-    document.getElementById("timestampValue").textContent = new Date().toLocaleString();
-  }
-
-  // Initial render
-  renderPage();
+    // Initial rendering call
+    updatePage();
 });
 </script>
+
