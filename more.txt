@@ -1,12 +1,6 @@
-<!-- Inventory Page Section -->
 <section class="section" id="inventorySection">
-
-  <!-- Section Title -->
-  <h1 class="title">Inventory Page</h1>
-
-  <!-- Dynamic Content Container -->
+  
   <div class="section-content">
-    <!-- Table -->
     <table class="table is-striped is-hoverable">
       <thead>
         <tr>
@@ -27,14 +21,11 @@
           <td><button class="button is-info details-btn">Details</button></td>
         </tr>
         {{else}}
-        <tr>
-          <td colspan="5">No data available</td>
-        </tr>
+        <tr><td colspan="5">No data available</td></tr>
         {{end}}
       </tbody>
     </table>
 
-    <!-- Pagination & Timestamp -->
     <div class="pagination-container">
       <nav class="pagination">
         <button class="pagination-previous" id="prevPage">Previous</button>
@@ -44,63 +35,67 @@
       <p id="timestamp">Last Updated: <span id="timestampValue"></span></p>
     </div>
   </div>
-
 </section>
 
 <script>
 document.addEventListener("DOMContentLoaded", function () {
-    const section = document.getElementById("inventorySection");
-    
-    let currentPage = Number('{{ .CurrentPage }}') || 1;
-    const totalPages = Number('{{ .TotalPages }}') || 1;
-    const readinessData = JSON.parse('{{ .ReadinessData | toJson | safeJS }}') || [];
+  const inventorySection = document.getElementById("inventorySection");
 
-    console.log("Total Pages:", totalPages);
-    console.log("Current Page:", currentPage);
-    console.log("Readiness Data:", readinessData);
+  let currentPage = Number('{{ .CurrentPage }}') || 1;
+  let totalPages = Number('{{ .TotalPages }}') || 1;
+  const readinessData = JSON.parse('{{ .ReadinessData | toJson | safeJS }}') || [];
 
-    // Event Delegation for Pagination
-    section.addEventListener("click", function (event) {
-        if (event.target.matches("#prevPage") && currentPage > 1) {
-            currentPage--;
-            updatePage();
-        } else if (event.target.matches("#nextPage") && currentPage < totalPages) {
-            currentPage++;
-            updatePage();
-        }
-    });
+  // Initial data logs (Client-side logging)
+  console.log("[Client] Page loaded");
+  console.log("[Client] CurrentPage:", currentPage);
+  console.log("[Client] TotalPages:", totalPages);
+  console.log("[Client] Total Readiness Data Records:", readinessData.length);
 
-    // Render the current page and timestamp
-    function updatePage() {
-        console.log(`Switching to page ${currentPage}`);
-        document.getElementById("currentPageDisplay").textContent =
-            `Page ${currentPage} of ${totalPages}`;
-        document.getElementById("timestampValue").textContent =
-            new Date().toLocaleString();
-
-        const rowsPerPage = 10;
-        const start = (currentPage - 1) * rowsPerPage;
-        const end = start + rowsPerPage;
-        const currentPageData = readinessData.slice(start, end);
-
-        const tbody = section.querySelector("table tbody");
-        tbody.innerHTML = ''; // clear existing rows
-
-        currentPageData.forEach(row => {
-            const tr = document.createElement("tr");
-            tr.innerHTML = `
-                <td><input type="checkbox" class="rowCheckbox"/></td>
-                <td>${row.Hostname}</td>
-                <td>${row.Readiness}</td>
-                <td>${row.BigBootRequired}</td>
-                <td><button class="button is-info details-btn">Details</button></td>
-            `;
-            tbody.appendChild(tr);
-        });
+  inventorySection.addEventListener("click", function (event) {
+    if (event.target.closest("#prevPage") && currentPage > 1) {
+      currentPage--;
+      console.log("[Client] Previous clicked. New page:", currentPage);
+      updatePage();
+    } else if (event.target.closest("#nextPage") && currentPage < totalPages) {
+      currentPage++;
+      console.log("[Client] Next clicked. New page:", currentPage);
+      updatePage();
     }
+  });
 
-    // Initial rendering call
-    updatePage();
+  function updatePage() {
+    console.log("[Client] Rendering page:", currentPage);
+    document.getElementById("currentPageDisplay").textContent = `Page ${currentPage} of ${totalPages}`;
+    document.getElementById("timestampValue").textContent = new Date().toLocaleString();
+
+    const rowsPerPage = 10;
+    const start = (currentPage - 1) * rowsPerPage;
+    const end = start + rowsPerPage;
+    const currentPageData = readinessData.slice(start, end);
+
+    // Log data being rendered to console (Client-side logging)
+    console.log("[Client] Current Page Data:", currentPageData);
+
+    const tbody = inventorySection.querySelector("table tbody");
+    tbody.innerHTML = ''; // clear existing rows
+
+    if (currentPageData.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5">No data available</td></tr>`;
+    } else {
+      currentPageData.forEach(row => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><input type="checkbox" class="rowCheckbox"/></td>
+          <td>${row.Hostname}</td>
+          <td>${row.Readiness}</td>
+          <td>${row.BigBootRequired}</td>
+          <td><button class="button is-info details-btn">Details</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+  }
+
+  updatePage(); // initial render
 });
 </script>
-
