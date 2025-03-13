@@ -1,8 +1,0 @@
-POST /your-endpoint
-Content-Type: application/json
-
-{
-  "page": 1,
-  "limit": 10,
-  "servers": ["server1", "server2"]
-}
