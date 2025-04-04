@@ -1,0 +1,1 @@
+= PostgreSQL.Database("edbpvisatpe0011:5446", "ppgsatpe01", [EncryptConnection=true, TrustServerCertificate=true])
