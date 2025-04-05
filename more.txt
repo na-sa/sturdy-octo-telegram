@@ -1,0 +1,129 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"time"
+)
+
+type SplunkService struct {
+	BaseURL  string
+	Username string
+	Password string
+	Token    string
+	Client   *http.Client
+}
+
+func NewSplunkService(baseURL, username, password string) *SplunkService {
+	return &SplunkService{
+		BaseURL:  baseURL,
+		Username: username,
+		Password: password,
+		Client:   &http.Client{Timeout: 60 * time.Second},
+	}
+}
+
+func (s *SplunkService) Authenticate() error {
+	authURL := fmt.Sprintf("%s/services/auth/login", s.BaseURL)
+
+	form := url.Values{}
+	form.Add("username", s.Username)
+	form.Add("password", s.Password)
+
+	resp, err := s.Client.PostForm(authURL, form)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	type LoginResp struct {
+		SessionKey string `xml:"sessionKey"`
+	}
+	body, _ := ioutil.ReadAll(resp.Body)
+	var result LoginResp
+	// You may want to use xml.Unmarshal here
+	// Just mock the token for now:
+	s.Token = "Splunk " + "REPLACE_WITH_REAL_TOKEN"
+
+	return nil
+}
+
+func (s *SplunkService) CreateSearchJob(query string, earliest, latest string) (string, error) {
+	jobURL := fmt.Sprintf("%s/services/search/jobs", s.BaseURL)
+
+	form := url.Values{}
+	form.Add("search", query)
+	form.Add("earliest_time", earliest)
+	form.Add("latest_time", latest)
+	form.Add("output_mode", "json")
+
+	req, _ := http.NewRequest("POST", jobURL, bytes.NewBufferString(form.Encode()))
+	req.Header.Set("Authorization", s.Token)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var jsonResp map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&jsonResp)
+
+	sid := jsonResp["sid"].(string)
+	return sid, nil
+}
+
+func (s *SplunkService) WaitForJob(sid string) error {
+	statusURL := fmt.Sprintf("%s/services/search/jobs/%s", s.BaseURL, sid)
+
+	for {
+		req, _ := http.NewRequest("GET", statusURL, nil)
+		req.Header.Set("Authorization", s.Token)
+
+		resp, err := s.Client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		var jsonResp map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&jsonResp)
+
+		entry := jsonResp["entry"].([]interface{})[0].(map[string]interface{})
+		content := entry["content"].(map[string]interface{})
+		if content["isDone"].(bool) {
+			break
+		}
+		time.Sleep(5 * time.Second)
+	}
+	return nil
+}
+
+func (s *SplunkService) FetchResults(sid string) ([]map[string]interface{}, error) {
+	resultsURL := fmt.Sprintf("%s/services/search/jobs/%s/results?output_mode=json", s.BaseURL, sid)
+	req, _ := http.NewRequest("GET", resultsURL, nil)
+	req.Header.Set("Authorization", s.Token)
+
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	results := result["results"].([]interface{})
+	var output []map[string]interface{}
+	for _, r := range results {
+		output = append(output, r.(map[string]interface{}))
+	}
+	return output, nil
+}

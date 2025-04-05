@@ -1,0 +1,29 @@
+func main() {
+	s := NewSplunkService("https://splunk-api.wellsfargo.net:8089", "SATPE.AMELIA.DEV", "O!3W(-J2rzKCJ5*!")
+
+	err := s.Authenticate()
+	if err != nil {
+		log.Fatal("Auth failed:", err)
+	}
+
+	searchQuery := `search index=os_nix_long_source ... | dedup host, actor | table host, time, job_id`
+	sid, err := s.CreateSearchJob(searchQuery, "-24h", "now")
+	if err != nil {
+		log.Fatal("Job creation failed:", err)
+	}
+
+	err = s.WaitForJob(sid)
+	if err != nil {
+		log.Fatal("Wait failed:", err)
+	}
+
+	results, err := s.FetchResults(sid)
+	if err != nil {
+		log.Fatal("Result fetch failed:", err)
+	}
+
+	fmt.Printf("Event Count Found: %d\n", len(results))
+	for _, row := range results {
+		fmt.Println(row)
+	}
+}
