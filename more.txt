@@ -1,0 +1,120 @@
+// kafka/consumer.go
+package kafka
+
+import (
+    "context"
+    "crypto/tls"
+    "crypto/x509"
+    "encoding/pem"
+    "io/ioutil"
+    "time"
+
+    "github.com/segmentio/kafka-go"
+    "github.com/sirupsen/logrus"
+    "infx-kafka-sync/config"
+)
+
+// Consumer wraps a segmentio Kafka reader.
+type Consumer struct {
+    reader *kafka.Reader
+}
+
+// NewConsumer builds and returns a Consumer configured for SSL/TLS.
+// It will log.Fatal if any cert/key loading or reader creation fails.
+func NewConsumer(cfg *config.Config) *Consumer {
+    // 1) Load root CA
+    caPEM, err := ioutil.ReadFile(cfg.SSLCAPath)
+    if err != nil {
+        logrus.Fatalf("cannot read SSL CA file %q: %v", cfg.SSLCAPath, err)
+    }
+    roots := x509.NewCertPool()
+    if ok := roots.AppendCertsFromPEM(caPEM); !ok {
+        logrus.Fatalf("failed to parse CA certificate %q", cfg.SSLCAPath)
+    }
+
+    // 2) Load client cert
+    certPEM, err := ioutil.ReadFile(cfg.SSLCertPath)
+    if err != nil {
+        logrus.Fatalf("cannot read client cert file %q: %v", cfg.SSLCertPath, err)
+    }
+
+    // 3) Load & decrypt client key
+    keyPEM, err := ioutil.ReadFile(cfg.SSLKeyPath)
+    if err != nil {
+        logrus.Fatalf("cannot read client key file %q: %v", cfg.SSLKeyPath, err)
+    }
+    block, _ := pem.Decode(keyPEM)
+    if block == nil {
+        logrus.Fatalf("failed to parse PEM block from key %q", cfg.SSLKeyPath)
+    }
+    keyBytes := block.Bytes
+    if cfg.SSLKeyPassword != "" {
+        kb, err := x509.DecryptPEMBlock(block, []byte(cfg.SSLKeyPassword))
+        if err != nil {
+            logrus.Fatalf("failed to decrypt key %q: %v", cfg.SSLKeyPath, err)
+        }
+        keyBytes = kb
+    }
+    // re-encode unencrypted PEM
+    keyPEM = pem.EncodeToMemory(&pem.Block{Type: block.Type, Bytes: keyBytes})
+
+    // 4) Build tls.Config with both CA and client cert
+    cert, err := tls.X509KeyPair(certPEM, keyPEM)
+    if err != nil {
+        logrus.Fatalf("failed to build x509 key pair: %v", err)
+    }
+    tlsConfig := &tls.Config{
+        RootCAs:      roots,
+        Certificates: []tls.Certificate{cert},
+    }
+
+    // 5) Construct the Kafka reader
+    r := kafka.NewReader(kafka.ReaderConfig{
+        Brokers:        []string{cfg.KafkaBrokers},
+        GroupID:        cfg.KafkaGroupID,
+        Topic:          cfg.KafkaTopic,
+        MinBytes:       1,          // 1B
+        MaxBytes:       10e6,       // 10MB
+        CommitInterval: 0,          // no auto-commit
+        Dialer:         &kafka.Dialer{Timeout: 10 * time.Second, TLS: tlsConfig},
+    })
+
+    logrus.Infof("Kafka reader initialized: broker=%s topic=%s", cfg.KafkaBrokers, cfg.KafkaTopic)
+    return &Consumer{reader: r}
+}
+
+// PollBatch reads up to `max` messages, waiting up to `timeout`.
+// Returns immediately on context cancellation or timeout.
+func (c *Consumer) PollBatch(ctx context.Context, max int, timeout time.Duration) ([]kafka.Message, error) {
+    ctx2, cancel := context.WithTimeout(ctx, timeout)
+    defer cancel()
+
+    var out []kafka.Message
+    for i := 0; i < max; i++ {
+        m, err := c.reader.FetchMessage(ctx2)
+        if err != nil {
+            if err == context.DeadlineExceeded {
+                break
+            }
+            return nil, err
+        }
+        out = append(out, m)
+    }
+    return out, nil
+}
+
+// CommitOffsets commits the offsets for all messages in `msgs`.
+// If any commit fails, returns that error immediately.
+func (c *Consumer) CommitOffsets(ctx context.Context, msgs []kafka.Message) error {
+    for _, m := range msgs {
+        if err := c.reader.CommitMessages(ctx, m); err != nil {
+            return err
+        }
+    }
+    return nil
+}
+
+// Close cleanly shuts down the Kafka reader.
+func (c *Consumer) Close() error {
+    return c.reader.Close()
+}
