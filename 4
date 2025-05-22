@@ -1,89 +1,59 @@
 @echo off
-REM -----------------------------
-REM   INFxUI Full Build Script
-REM -----------------------------
-REM Set log file path
+REM ────────────────────────────────────
+REM  Build & Package InfinexUI
+REM ────────────────────────────────────
+
+REM 1) Log setup
 set LOG_FILE=ui_build_log.txt
+echo ======================================= >> %LOG_FILE%
+echo Build started at %date% %time%      >> %LOG_FILE%
 
-echo ============================== >>%LOG_FILE%
-echo Build started at %date% %time% >>%LOG_FILE%
-
-call :main >>%LOG_FILE% 2>&1
-
-echo Build finished at %date% %time% >>%LOG_FILE%
-echo ============================== >>%LOG_FILE%
+REM 2) Main work
+call :main >> %LOG_FILE% 2>&1
 exit /b
 
-
 :main
-  REM —————————————————————————————
-  REM 1) Configuration
-  REM —————————————————————————————
-  set OUTPUT_DIR=ui_build
-  set ZIP_NAME=infxui
-  set DEST_DIR="C:\Users\k117655\OneDrive - Wells Fargo\Code backup\InfxUI"
-
-  REM Go build settings
+  REM — platform & paths
   set GOOS=linux
   set GOARCH=amd64
-  set BINARY_NAME=infxuiapi
+  set OUTPUT_DIR=ui_build
+  set BINARY_NAME=infxui
 
-  REM —————————————————————————————
-  REM 2) Clean previous build
-  REM —————————————————————————————
-  if exist %OUTPUT_DIR% (
-    echo Removing old %OUTPUT_DIR%…
-    rmdir /s /q %OUTPUT_DIR%
-  )
+  REM 3) Cleanup previous
+  if exist %OUTPUT_DIR% rmdir /s /q %OUTPUT_DIR%
   mkdir %OUTPUT_DIR%
 
-  REM —————————————————————————————
-  REM 3) Compile Go backend
-  REM —————————————————————————————
-  echo Compiling Go API (%GOOS%/%GOARCH%)…
+  REM 4) Compile Go server
+  echo Compiling Go binary for %GOOS%/%GOARCH%...
   go build -o %OUTPUT_DIR%\%BINARY_NAME% main.go
   if errorlevel 1 (
-    echo Go build failed!
+    echo Go build failed! 
     exit /b 1
   )
-  echo Go binary built: %OUTPUT_DIR%\%BINARY_NAME%
+  echo Go binary created: %OUTPUT_DIR%\%BINARY_NAME%
 
-  REM —————————————————————————————
-  REM 4) Copy static assets (frontend)
-  REM —————————————————————————————
-  echo Copying UI assets…
+  REM 5) (Optional) compress binary
+  echo Compressing binary...
+  tar -czf %OUTPUT_DIR%\%BINARY_NAME%.tar.gz -C %OUTPUT_DIR% %BINARY_NAME%
+
+  REM 6) Copy all frontend assets
+  echo Copying 'static\' → '%OUTPUT_DIR%\static\'...
   xcopy /s /y /i static %OUTPUT_DIR%\static
-  xcopy /y index.html        %OUTPUT_DIR%
-  xcopy /y manifest.json     %OUTPUT_DIR%
-  xcopy /y service-worker.js %OUTPUT_DIR%
-
   if errorlevel 1 (
-    echo Copy step failed!
+    echo Static assets copy failed!
     exit /b 1
   )
-  echo Assets copied.
 
-  REM —————————————————————————————
-  REM 5) Compress for distribution
-  REM —————————————————————————————
-  echo Compressing to %ZIP_NAME%.tar.gz…
-  tar -cvzf %OUTPUT_DIR%\%ZIP_NAME%.tar.gz -C %OUTPUT_DIR% .
-  if errorlevel 1 (
-    echo Compression failed!
-    exit /b 1
+  REM 7) Copy extra app folders (if you have them)
+  if exist appconfig (
+    echo Copying 'appconfig\' → '%OUTPUT_DIR%\appconfig\'...
+    xcopy /s /y /i appconfig %OUTPUT_DIR%\appconfig
   )
-  echo Compression succeeded.
+  if exist applogs (
+    echo Copying 'applogs\'   → '%OUTPUT_DIR%\applogs\'...
+    xcopy /s /y /i applogs   %OUTPUT_DIR%\applogs
+  )
 
-  REM —————————————————————————————
-  REM 6) Deploy to backup folder
-  REM —————————————————————————————
-  echo Deploying build to %DEST_DIR%…
-  if not exist %DEST_DIR% mkdir %DEST_DIR%
-  xcopy /s /y %OUTPUT_DIR%\* %DEST_DIR%
-  if errorlevel 1 (
-    echo Deployment copy failed!
-    exit /b 1
-  )
-  echo Deployment succeeded.
+  echo Build & packaging completed.
 
 exit /b
