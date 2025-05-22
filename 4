@@ -1,0 +1,89 @@
+@echo off
+REM -----------------------------
+REM   INFxUI Full Build Script
+REM -----------------------------
+REM Set log file path
+set LOG_FILE=ui_build_log.txt
+
+echo ============================== >>%LOG_FILE%
+echo Build started at %date% %time% >>%LOG_FILE%
+
+call :main >>%LOG_FILE% 2>&1
+
+echo Build finished at %date% %time% >>%LOG_FILE%
+echo ============================== >>%LOG_FILE%
+exit /b
+
+
+:main
+  REM —————————————————————————————
+  REM 1) Configuration
+  REM —————————————————————————————
+  set OUTPUT_DIR=ui_build
+  set ZIP_NAME=infxui
+  set DEST_DIR="C:\Users\k117655\OneDrive - Wells Fargo\Code backup\InfxUI"
+
+  REM Go build settings
+  set GOOS=linux
+  set GOARCH=amd64
+  set BINARY_NAME=infxuiapi
+
+  REM —————————————————————————————
+  REM 2) Clean previous build
+  REM —————————————————————————————
+  if exist %OUTPUT_DIR% (
+    echo Removing old %OUTPUT_DIR%…
+    rmdir /s /q %OUTPUT_DIR%
+  )
+  mkdir %OUTPUT_DIR%
+
+  REM —————————————————————————————
+  REM 3) Compile Go backend
+  REM —————————————————————————————
+  echo Compiling Go API (%GOOS%/%GOARCH%)…
+  go build -o %OUTPUT_DIR%\%BINARY_NAME% main.go
+  if errorlevel 1 (
+    echo Go build failed!
+    exit /b 1
+  )
+  echo Go binary built: %OUTPUT_DIR%\%BINARY_NAME%
+
+  REM —————————————————————————————
+  REM 4) Copy static assets (frontend)
+  REM —————————————————————————————
+  echo Copying UI assets…
+  xcopy /s /y /i static %OUTPUT_DIR%\static
+  xcopy /y index.html        %OUTPUT_DIR%
+  xcopy /y manifest.json     %OUTPUT_DIR%
+  xcopy /y service-worker.js %OUTPUT_DIR%
+
+  if errorlevel 1 (
+    echo Copy step failed!
+    exit /b 1
+  )
+  echo Assets copied.
+
+  REM —————————————————————————————
+  REM 5) Compress for distribution
+  REM —————————————————————————————
+  echo Compressing to %ZIP_NAME%.tar.gz…
+  tar -cvzf %OUTPUT_DIR%\%ZIP_NAME%.tar.gz -C %OUTPUT_DIR% .
+  if errorlevel 1 (
+    echo Compression failed!
+    exit /b 1
+  )
+  echo Compression succeeded.
+
+  REM —————————————————————————————
+  REM 6) Deploy to backup folder
+  REM —————————————————————————————
+  echo Deploying build to %DEST_DIR%…
+  if not exist %DEST_DIR% mkdir %DEST_DIR%
+  xcopy /s /y %OUTPUT_DIR%\* %DEST_DIR%
+  if errorlevel 1 (
+    echo Deployment copy failed!
+    exit /b 1
+  )
+  echo Deployment succeeded.
+
+exit /b
