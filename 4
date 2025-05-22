@@ -54,6 +54,18 @@ exit /b
     xcopy /s /y /i applogs   %OUTPUT_DIR%\applogs
   )
 
-  echo Build & packaging completed.
+REM 7) Copy everything to your backup directory
+  set DEST_DIR="C:\Users\k117655\OneDrive - Wells Fargo\Code backup\InfinexUI"
+  if not exist %DEST_DIR% (
+    mkdir %DEST_DIR%
+  )
+  echo Copying build output → %DEST_DIR%...
+  xcopy /s /y /i "%OUTPUT_DIR%\*" %DEST_DIR%
+  if errorlevel 1 (
+    echo Backup copy failed!
+    exit /b 1
+  )
+
+echo Build & packaging completed.
 
 exit /b
