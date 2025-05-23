@@ -1,0 +1,67 @@
+package main
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"io/ioutil"
+)
+
+// loadTLSCert decrypts an encrypted PEM private key using the given passphrase,
+// then returns a tls.Certificate you can hand straight to ListenAndServeTLS.
+func loadTLSCert(certPath, keyPath, passphrase string) (tls.Certificate, error) {
+	// read the cert and key files
+	certPEM, err := ioutil.ReadFile(certPath)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("reading cert: %w", err)
+	}
+	keyPEM, err := ioutil.ReadFile(keyPath)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("reading key: %w", err)
+	}
+
+	// try the easy path first
+	if cert, err := tls.X509KeyPair(certPEM, keyPEM); err == nil {
+		return cert, nil
+	}
+
+	// decode the PEM block
+	block, _ := pem.Decode(keyPEM)
+	if block == nil {
+		return tls.Certificate{}, fmt.Errorf("no PEM block found in key")
+	}
+
+	var derBytes []byte
+	// if it’s encrypted, decrypt it
+	if x509.IsEncryptedPEMBlock(block) {
+		derBytes, err = x509.DecryptPEMBlock(block, []byte(passphrase))
+		if err != nil {
+			return tls.Certificate{}, fmt.Errorf("decrypting PEM block: %w", err)
+		}
+	} else {
+		derBytes = block.Bytes
+	}
+
+	// try parsing as PKCS#1, then PKCS#8
+	var privKey interface{}
+	if pk1, err := x509.ParsePKCS1PrivateKey(derBytes); err == nil {
+		privKey = pk1
+	} else {
+		pk8, err := x509.ParsePKCS8PrivateKey(derBytes)
+		if err != nil {
+			return tls.Certificate{}, fmt.Errorf("parsing private key: %w", err)
+		}
+		privKey = pk8
+	}
+
+	// re-encode into a plain (unencrypted) PEM block
+	unencBlock := &pem.Block{
+		Type:  block.Type,
+		Bytes: derBytes,
+	}
+	plainKeyPEM := pem.EncodeToMemory(unencBlock)
+
+	// finally hand off to tls.X509KeyPair
+	return tls.X509KeyPair(certPEM, plainKeyPEM)
+}
