@@ -1,35 +1,70 @@
-type ilhcev4150g380u.wellsfargo.net.crt ^
-     "Wells Fargo Enterprise Certification Authority 05-2 G2.crt" ^
-     "Wells Fargo Root Certification Authority 01 G2.crt" > fullchain.pem
+package main
 
+import (
+	"log"
+	"os"
 
-type ilhcev4150g380u.wellsfargo.net.crt ^
-     ilhcev4150g380u.wellsfargo.net-chain.pem > fullchain.pem
+	"infinexui/api"
 
+	"mime"
 
+	"github.com/gin-gonic/gin"
+)
 
-
-// (Optional) redirect HTTP→HTTPS:
-go func() {
-  http.ListenAndServe(":80", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-    target := "https://" + req.Host + req.URL.RequestURI()
-    http.Redirect(w, req, target, http.StatusMovedPermanently)
-  }))
-}()
-
-// Serve TLS on 443 (requires admin privileges)
-log.Println("Starting HTTPS on :443")
-if err := r.RunTLS(
-  ":443",
-  "fullchain.pem",     // bundle you just made
-  "ilhcev4150g380u.wellsfargo.net.key",
-); err != nil {
-  log.Fatalf("HTTPS failed: %v", err)
+// noCacheMiddleware adds headers to force fresh content on every request.
+func noCacheMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+		c.Next()
+	}
 }
 
-PowerShell alternative
+func init() {
+	// Ensure .mjs files are served with the proper JS MIME type
+	if err := mime.AddExtensionType(".mjs", "application/javascript"); err != nil {
+		log.Printf("warning: failed to register .mjs MIME type: %v", err)
+	}
+}
 
-Get-Content ilhcev4150g380u.wellsfargo.net.crt, `
-            "Wells Fargo Enterprise Certification Authority 05-2 G2.crt", `
-            "Wells Fargo Root Certification Authority 01 G2.crt" |
-  Set-Content fullchain.pem
+func main() {
+	// 1) Create the router
+	router := gin.Default()
+	router.Use(noCacheMiddleware())
+
+	// 2) Mount your JSON API under /api
+	api.RegisterRoutes(router)
+
+	// 3) Serve the UI build:
+	//
+	//    - All files under ui_build/static are exposed at /static
+	//    - manifest.json & service-worker.js at the root
+	//    - Fallback to index.html for SPA routing
+	router.Static("/static", "./ui_build/static")
+	router.StaticFile("/manifest.json", "./ui_build/manifest.json")
+	router.StaticFile("/service-worker.js", "./ui_build/service-worker.js")
+
+	router.NoRoute(func(c *gin.Context) {
+		// For any other path not handled above, serve the SPA entrypoint
+		c.File("./ui_build/index.html")
+	})
+
+	// 4) Pick port and TLS vs plain HTTP based on USE_TLS env var
+	useTLS := os.Getenv("USE_TLS") == "true"
+	addr := ":8080"
+	if useTLS {
+		addr = ":443"
+		certFile := "./certs/fullchain.pem"
+		keyFile := "./certs/ilhcev4150g380u.wellsfargo.net.key"
+		log.Printf("Starting HTTPS server on %s (TLS enabled)", addr)
+		if err := router.RunTLS(addr, certFile, keyFile); err != nil {
+			log.Fatalf("Failed to start HTTPS server: %v", err)
+		}
+	} else {
+		log.Printf("Starting HTTP server on %s", addr)
+		if err := router.Run(addr); err != nil {
+			log.Fatalf("Failed to start HTTP server: %v", err)
+		}
+	}
+}
