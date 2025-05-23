@@ -1,55 +1,52 @@
-package main
-
 import (
 	"crypto/tls"
-	"log"
-	"net/http"
-	"os"
-
-	"github.com/gin-gonic/gin"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"io/ioutil"
 )
 
-func main() {
-	// 1) Build your Gin router as usual
-	gin.SetMode(gin.ReleaseMode)
-	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
-	api.RegisterRoutes(r) // your API routes under /api
-
-	// 2) Decide HTTP vs HTTPS by env var
-	useTLS := os.Getenv("USE_TLS") == "true"
-	addr := ":8080"
-
-	if useTLS {
-		// 3) Load & decrypt your cert/key
-		pass := os.Getenv("TLS_KEY_PASSPHRASE") // pick this up from env
-		cert, err := loadTLSCert(
-			"./certs/fullchain.pem",                      // cert PEM
-			"./certs/ilhcev4150g380u.wellsfargo.net.key", // encrypted key PEM
-			pass,
-		)
-		if err != nil {
-			log.Fatalf("failed to load TLS cert: %v", err)
-		}
-
-		// 4) Create a custom HTTP server with our in-memory cert
-		server := &http.Server{
-			Addr:    ":443", // override port for HTTPS
-			Handler: r,
-			TLSConfig: &tls.Config{
-				Certificates: []tls.Certificate{cert},
-			},
-		}
-
-		log.Printf("🚀 Starting HTTPS on %s", server.Addr)
-		// the empty strings here tell Go to use TLSConfig.Certificates
-		if err := server.ListenAndServeTLS("", ""); err != nil {
-			log.Fatalf("HTTPS failed: %v", err)
-		}
-	} else {
-		log.Printf("🚀 Starting HTTP on %s", addr)
-		if err := r.Run(addr); err != nil {
-			log.Fatalf("HTTP failed: %v", err)
-		}
+// loadTLSCert decrypts an encrypted PEM private key using the given passphrase,
+// then returns a tls.Certificate you can hand straight to ListenAndServeTLS.
+func loadTLSCert(certPath, keyPath, passphrase string) (tls.Certificate, error) {
+	// 1) Read the cert and key files
+	certPEM, err := ioutil.ReadFile(certPath)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("reading cert: %w", err)
 	}
+	keyPEM, err := ioutil.ReadFile(keyPath)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("reading key: %w", err)
+	}
+
+	// 2) Try the easy path first (unencrypted key)
+	if cert, err := tls.X509KeyPair(certPEM, keyPEM); err == nil {
+		return cert, nil
+	}
+
+	// 3) Decode the encrypted PEM block
+	block, _ := pem.Decode(keyPEM)
+	if block == nil {
+		return tls.Certificate{}, fmt.Errorf("no PEM block found in key")
+	}
+
+	// 4) Decrypt the block
+	derBytes, err := x509.DecryptPEMBlock(block, []byte(passphrase))
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("decrypting key: %w", err)
+	}
+
+	// 5) Re-encode the decrypted DER back into a PEM block
+	decryptedPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  block.Type, // e.g. "RSA PRIVATE KEY"
+		Bytes: derBytes,
+	})
+
+	// 6) Now build the TLS certificate from the cert + decrypted key PEM
+	cert, err := tls.X509KeyPair(certPEM, decryptedPEM)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("creating X509KeyPair: %w", err)
+	}
+
+	return cert, nil
 }
