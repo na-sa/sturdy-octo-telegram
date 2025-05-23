@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// noCacheMiddleware adds headers to force fresh content on every request.
+// noCacheMiddleware adds headers to prevent caching in dev
 func noCacheMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -22,49 +22,47 @@ func noCacheMiddleware() gin.HandlerFunc {
 }
 
 func init() {
-	// Ensure .mjs files are served with the proper JS MIME type
+	// Make sure .mjs modules are served with correct MIME
 	if err := mime.AddExtensionType(".mjs", "application/javascript"); err != nil {
-		log.Printf("warning: failed to register .mjs MIME type: %v", err)
+		log.Printf("warning: could not register .mjs MIME type: %v", err)
 	}
 }
 
 func main() {
-	// 1) Create the router
-	router := gin.Default()
-	router.Use(noCacheMiddleware())
+	// 1) Create router with no-cache
+	r := gin.Default()
+	r.Use(noCacheMiddleware())
 
-	// 2) Mount your JSON API under /api
-	api.RegisterRoutes(router)
+	// 2) Mount your JSON API at /api
+	api.RegisterRoutes(r)
 
-	// 3) Serve the UI build:
-	//
-	//    - All files under ui_build/static are exposed at /static
-	//    - manifest.json & service-worker.js at the root
-	//    - Fallback to index.html for SPA routing
-	router.Static("/static", "./ui_build/static")
-	router.StaticFile("/manifest.json", "./ui_build/manifest.json")
-	router.StaticFile("/service-worker.js", "./ui_build/service-worker.js")
+	// 3) Serve your frontend static files exactly as before
+	//    All your CSS/JS/images go under ./static
+	r.Static("/static", "./static")
+	r.StaticFile("/manifest.json", "./static/manifest.json")
+	r.StaticFile("/service-worker.js", "./static/service-worker.js")
 
-	router.NoRoute(func(c *gin.Context) {
-		// For any other path not handled above, serve the SPA entrypoint
-		c.File("./ui_build/index.html")
+	// SPA fallback for index.html in ./static
+	r.NoRoute(func(c *gin.Context) {
+		c.File("./static/index.html")
 	})
 
-	// 4) Pick port and TLS vs plain HTTP based on USE_TLS env var
+	// 4) Decide HTTP vs HTTPS by env var
 	useTLS := os.Getenv("USE_TLS") == "true"
 	addr := ":8080"
 	if useTLS {
 		addr = ":443"
-		certFile := "./certs/fullchain.pem"
-		keyFile := "./certs/ilhcev4150g380u.wellsfargo.net.key"
-		log.Printf("Starting HTTPS server on %s (TLS enabled)", addr)
-		if err := router.RunTLS(addr, certFile, keyFile); err != nil {
-			log.Fatalf("Failed to start HTTPS server: %v", err)
+		log.Printf("🚀 Starting HTTPS on %s", addr)
+		if err := r.RunTLS(addr,
+			"./certs/fullchain.pem",
+			"./certs/ilhcev4150g380u.wellsfargo.net.key",
+		); err != nil {
+			log.Fatalf("HTTPS failed: %v", err)
 		}
 	} else {
-		log.Printf("Starting HTTP server on %s", addr)
-		if err := router.Run(addr); err != nil {
-			log.Fatalf("Failed to start HTTP server: %v", err)
+		log.Printf("🚀 Starting HTTP on %s", addr)
+		if err := r.Run(addr); err != nil {
+			log.Fatalf("HTTP failed: %v", err)
 		}
 	}
 }
