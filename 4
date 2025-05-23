@@ -1,62 +1,49 @@
 package main
 
 import (
+	"crypto/tls"
 	"log"
+	"net/http"
 	"os"
-
-	"infinexui/api"
-
-	"mime"
 
 	"github.com/gin-gonic/gin"
 )
 
-// noCacheMiddleware adds headers to prevent caching in dev
-func noCacheMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-		c.Header("Pragma", "no-cache")
-		c.Header("Expires", "0")
-		c.Next()
-	}
-}
-
-func init() {
-	// Make sure .mjs modules are served with correct MIME
-	if err := mime.AddExtensionType(".mjs", "application/javascript"); err != nil {
-		log.Printf("warning: could not register .mjs MIME type: %v", err)
-	}
-}
-
 func main() {
-	// 1) Create router with no-cache
-	r := gin.Default()
-	r.Use(noCacheMiddleware())
+	// 1) Build your Gin router as usual
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+	r.Use(gin.Logger(), gin.Recovery())
+	api.RegisterRoutes(r) // your API routes under /api
 
-	// 2) Mount your JSON API at /api
-	api.RegisterRoutes(r)
-
-	// 3) Serve your frontend static files exactly as before
-	//    All your CSS/JS/images go under ./static
-	r.Static("/static", "./static")
-	r.StaticFile("/manifest.json", "./static/manifest.json")
-	r.StaticFile("/service-worker.js", "./static/service-worker.js")
-
-	// SPA fallback for index.html in ./static
-	r.NoRoute(func(c *gin.Context) {
-		c.File("./static/index.html")
-	})
-
-	// 4) Decide HTTP vs HTTPS by env var
+	// 2) Decide HTTP vs HTTPS by env var
 	useTLS := os.Getenv("USE_TLS") == "true"
 	addr := ":8080"
+
 	if useTLS {
-		addr = ":443"
-		log.Printf("🚀 Starting HTTPS on %s", addr)
-		if err := r.RunTLS(addr,
-			"./certs/fullchain.pem",
-			"./certs/ilhcev4150g380u.wellsfargo.net.key",
-		); err != nil {
+		// 3) Load & decrypt your cert/key
+		pass := os.Getenv("TLS_KEY_PASSPHRASE") // pick this up from env
+		cert, err := loadTLSCert(
+			"./certs/fullchain.pem",                      // cert PEM
+			"./certs/ilhcev4150g380u.wellsfargo.net.key", // encrypted key PEM
+			pass,
+		)
+		if err != nil {
+			log.Fatalf("failed to load TLS cert: %v", err)
+		}
+
+		// 4) Create a custom HTTP server with our in-memory cert
+		server := &http.Server{
+			Addr:    ":443", // override port for HTTPS
+			Handler: r,
+			TLSConfig: &tls.Config{
+				Certificates: []tls.Certificate{cert},
+			},
+		}
+
+		log.Printf("🚀 Starting HTTPS on %s", server.Addr)
+		// the empty strings here tell Go to use TLSConfig.Certificates
+		if err := server.ListenAndServeTLS("", ""); err != nil {
 			log.Fatalf("HTTPS failed: %v", err)
 		}
 	} else {
