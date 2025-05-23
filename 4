@@ -1,71 +1,35 @@
-@echo off
-REM ────────────────────────────────────
-REM  Build & Package InfinexUI
-REM ────────────────────────────────────
+type ilhcev4150g380u.wellsfargo.net.crt ^
+     "Wells Fargo Enterprise Certification Authority 05-2 G2.crt" ^
+     "Wells Fargo Root Certification Authority 01 G2.crt" > fullchain.pem
 
-REM 1) Log setup
-set LOG_FILE=ui_build_log.txt
-echo ======================================= >> %LOG_FILE%
-echo Build started at %date% %time%      >> %LOG_FILE%
 
-REM 2) Main work
-call :main >> %LOG_FILE% 2>&1
-exit /b
+type ilhcev4150g380u.wellsfargo.net.crt ^
+     ilhcev4150g380u.wellsfargo.net-chain.pem > fullchain.pem
 
-:main
-  REM — platform & paths
-  set GOOS=linux
-  set GOARCH=amd64
-  set OUTPUT_DIR=ui_build
-  set BINARY_NAME=infxui
 
-  REM 3) Cleanup previous
-  if exist %OUTPUT_DIR% rmdir /s /q %OUTPUT_DIR%
-  mkdir %OUTPUT_DIR%
 
-  REM 4) Compile Go server
-  echo Compiling Go binary for %GOOS%/%GOARCH%...
-  go build -o %OUTPUT_DIR%\%BINARY_NAME% main.go
-  if errorlevel 1 (
-    echo Go build failed! 
-    exit /b 1
-  )
-  echo Go binary created: %OUTPUT_DIR%\%BINARY_NAME%
 
-  REM 5) (Optional) compress binary
-  echo Compressing binary...
-  tar -czf %OUTPUT_DIR%\%BINARY_NAME%.tar.gz -C %OUTPUT_DIR% %BINARY_NAME%
+// (Optional) redirect HTTP→HTTPS:
+go func() {
+  http.ListenAndServe(":80", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+    target := "https://" + req.Host + req.URL.RequestURI()
+    http.Redirect(w, req, target, http.StatusMovedPermanently)
+  }))
+}()
 
-  REM 6) Copy all frontend assets
-  echo Copying 'static\' → '%OUTPUT_DIR%\static\'...
-  xcopy /s /y /i static %OUTPUT_DIR%\static
-  if errorlevel 1 (
-    echo Static assets copy failed!
-    exit /b 1
-  )
+// Serve TLS on 443 (requires admin privileges)
+log.Println("Starting HTTPS on :443")
+if err := r.RunTLS(
+  ":443",
+  "fullchain.pem",     // bundle you just made
+  "ilhcev4150g380u.wellsfargo.net.key",
+); err != nil {
+  log.Fatalf("HTTPS failed: %v", err)
+}
 
-  REM 7) Copy extra app folders (if you have them)
-  if exist appconfig (
-    echo Copying 'appconfig\' → '%OUTPUT_DIR%\appconfig\'...
-    xcopy /s /y /i appconfig %OUTPUT_DIR%\appconfig
-  )
-  if exist applogs (
-    echo Copying 'applogs\'   → '%OUTPUT_DIR%\applogs\'...
-    xcopy /s /y /i applogs   %OUTPUT_DIR%\applogs
-  )
+PowerShell alternative
 
-REM 7) Copy everything to your backup directory
-  set DEST_DIR="C:\Users\k117655\OneDrive - Wells Fargo\Code backup\InfinexUI"
-  if not exist %DEST_DIR% (
-    mkdir %DEST_DIR%
-  )
-  echo Copying build output → %DEST_DIR%...
-  xcopy /s /y /i "%OUTPUT_DIR%\*" %DEST_DIR%
-  if errorlevel 1 (
-    echo Backup copy failed!
-    exit /b 1
-  )
-
-echo Build & packaging completed.
-
-exit /b
+Get-Content ilhcev4150g380u.wellsfargo.net.crt, `
+            "Wells Fargo Enterprise Certification Authority 05-2 G2.crt", `
+            "Wells Fargo Root Certification Authority 01 G2.crt" |
+  Set-Content fullchain.pem
