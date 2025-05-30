@@ -1,16 +1,31 @@
-BootSizeMeasure =
-VAR txt = SELECTEDVALUE( PrecheckDeviceStorage[summary], "" )
-VAR posLabel = SEARCH( "Total Size:", txt, 1, 0 )
+BootSize =
+VAR txt      = [summary]
+VAR posLabel = SEARCH("Total Size:", txt, 1, 0)
+VAR result =
+    IF(
+        posLabel = 0,
+        BLANK(),
+        VAR startPos = posLabel + LEN("Total Size:")
+        VAR endPos   = SEARCH(" MB", txt, startPos, 0)
+        RETURN
+            IF(endPos = 0,
+               BLANK(),
+               VALUE(TRIM(MID(txt, startPos, endPos - startPos))))
+    )
 RETURN
-IF(
-    posLabel = 0,
-    BLANK(),
-    VAR startPos = posLabel + LEN( "Total Size:" )
-    VAR endPos   = SEARCH( " MB", txt, startPos, 0 )
-    RETURN
-        IF(
-            endPos = 0,
-            BLANK(),
-            VALUE( TRIM( MID( txt, startPos, endPos - startPos ) ) )
-        )
-)
+result
+
+BootSizeMeasure =
+VAR txt      = FIRSTNONBLANK( PrecheckDeviceStorage[summary], "" )
+VAR posLabel = SEARCH("Total Size:", txt, 1, 0)
+RETURN
+    IF(
+        posLabel = 0,
+        BLANK(),
+        VAR startPos = posLabel + LEN("Total Size:")
+        VAR endPos   = SEARCH(" MB", txt, startPos, 0)
+        RETURN
+            IF(endPos = 0,
+               BLANK(),
+               VALUE(TRIM(MID(txt, startPos, endPos - startPos))))
+    )
