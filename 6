@@ -1,0 +1,18 @@
+BootSize =
+VAR txt          = [summary]                                 -- full row text
+VAR posLabel     = FIND ( "Total Size:", txt, 1, 0 )         -- 0 if not found
+VAR result =
+    IF (
+        posLabel = 0,                                        -- label missing → blank
+        BLANK(),
+        VAR startPos = posLabel + LEN ( "Total Size:" )      -- first char after label
+        VAR endPos   = FIND ( " MB", txt, startPos, 0 )      -- 0 if " MB" not found
+        RETURN
+            IF (
+                endPos = 0,
+                BLANK(),                                     -- closing tag missing → blank
+                VALUE ( TRIM ( MID ( txt, startPos, endPos - startPos ) ) )
+            )
+    )
+RETURN
+result
