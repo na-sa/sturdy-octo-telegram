@@ -1,52 +1,32 @@
-import (
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/pem"
-	"fmt"
-	"io/ioutil"
+PrecheckDeviceStorage =
+SELECTCOLUMNS (
+    FILTER (
+        ipu_device_preCheck_raw_logs_infx,
+        ipu_device_preCheck_raw_logs_infx[pre_check_actor]
+            IN { "check_boot_filesystem", "custom_boot_filesystem" }
+    ),
+    "hostname", ipu_device_preCheck_raw_logs_infx[pre_Check_Host],
+    "summary",  ipu_device_preCheck_raw_logs_infx[pre_Check_Summary]
 )
 
-// loadTLSCert decrypts an encrypted PEM private key using the given passphrase,
-// then returns a tls.Certificate you can hand straight to ListenAndServeTLS.
-func loadTLSCert(certPath, keyPath, passphrase string) (tls.Certificate, error) {
-	// 1) Read the cert and key files
-	certPEM, err := ioutil.ReadFile(certPath)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("reading cert: %w", err)
-	}
-	keyPEM, err := ioutil.ReadFile(keyPath)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("reading key: %w", err)
-	}
+BootSpace =
+VAR txt         = [summary]
+VAR startPos    = FIND ( "Available Size:", txt, 1, BLANK() ) + LEN ( "Available Size:" )
+VAR endPos      = FIND ( " MB", txt, startPos, BLANK() )
+RETURN
+IF (
+    ISBLANK ( startPos ) || ISBLANK ( endPos ),
+    BLANK(),
+    VALUE ( MID ( txt, startPos, endPos - startPos ) )
+)
 
-	// 2) Try the easy path first (unencrypted key)
-	if cert, err := tls.X509KeyPair(certPEM, keyPEM); err == nil {
-		return cert, nil
-	}
-
-	// 3) Decode the encrypted PEM block
-	block, _ := pem.Decode(keyPEM)
-	if block == nil {
-		return tls.Certificate{}, fmt.Errorf("no PEM block found in key")
-	}
-
-	// 4) Decrypt the block
-	derBytes, err := x509.DecryptPEMBlock(block, []byte(passphrase))
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("decrypting key: %w", err)
-	}
-
-	// 5) Re-encode the decrypted DER back into a PEM block
-	decryptedPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  block.Type, // e.g. "RSA PRIVATE KEY"
-		Bytes: derBytes,
-	})
-
-	// 6) Now build the TLS certificate from the cert + decrypted key PEM
-	cert, err := tls.X509KeyPair(certPEM, decryptedPEM)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("creating X509KeyPair: %w", err)
-	}
-
-	return cert, nil
-}
+BootSize =
+VAR txt         = [summary]
+VAR startPos    = FIND ( "Total Size:", txt, 1, BLANK() ) + LEN ( "Total Size:" )
+VAR endPos      = FIND ( " MB", txt, startPos, BLANK() )
+RETURN
+IF (
+    ISBLANK ( startPos ) || ISBLANK ( endPos ),
+    BLANK(),
+    VALUE ( MID ( txt, startPos, endPos - startPos ) )
+)
