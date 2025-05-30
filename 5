@@ -1,1 +1,13 @@
 Avg BootSpace (MB) = AVERAGE ( PrecheckDeviceStorage[BootSpace] )
+
+
+BootSize =
+VAR txt       = [summary]
+VAR startPos  = SEARCH("Total Size:", txt, 1, 0) + LEN("Total Size:")
+VAR endPos    = SEARCH(" MB", txt, startPos, 0)
+RETURN
+IF(
+    OR(startPos = LEN("Total Size:"), endPos = 0),
+    BLANK(),
+    VALUE(TRIM(MID(txt, startPos, endPos - startPos)))
+)
