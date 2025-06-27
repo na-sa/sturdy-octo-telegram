@@ -1,0 +1,47 @@
+Subject: Updates on Pre-check Visibility, Bigboot Logic, and PowerBI Dashboard
+
+Hi Leo,
+
+For now, Beams remains our trusted inventory source. Direct Snow data access was denied, but I’ll continue to explore options.
+
+✅ Pre-check Visibility for Rolled Back Servers
+We’ve currently reduced the visibility window for rolled back servers from 30 days to 15 days.
+
+For the first 15 days, we rely on our internal data.
+
+After that, we use Snow data's OS version to supplement visibility in the precheck.
+
+Zack and I have been working on a solution to detect rollbacks automatically. We recently received the necessary infra in Splunk Dev to begin testing. A trusted solution may be ready in about 2 months, but until then, this workaround remains in place. This is a significant shift in how we process logs and will require extensive validation before full rollout.
+
+Let me know if you’d like to reduce the 15-day window further, though that might increase ambiguity about whether a server was upgraded or rolled back.
+
+📏 Bigboot Logic Threshold
+Servers with boot disk size ≥ 900 MB do not require Bigboot.
+
+This threshold is currently active and used in validations.
+
+📊 PowerBI Dashboard Refresh Timing
+The PowerBI dashboard is refreshed daily on weekdays before 12 PM.
+
+Best regards,
+Naveen S
+Linux Platform & Data Engineering
+
+Let me know if you'd like a more formal or more technical version depending on the audience (e.g., for leadership or internal engineering notes).
+
+
+
+
+
+
+
+
+
+
+
+
+Tools
+
+
+
+ChatG
