@@ -1,0 +1,10 @@
+{
+  // …
+  "amelia": {
+    "auth_url":      "https://apiIDP-…/oauth/token",
+    "client_id":      "HV8CM2fISAv0OegRu8ALhms3GeR8zoUi",
+    "client_secret":  "•••••••••",
+    "token_ttl":      "1h"
+  },
+  "amelia_events_url": "https://apigw-uat.wellsfargo.net/OFA/FA/laC/amelia-automation-ingress/v1/Events"
+}

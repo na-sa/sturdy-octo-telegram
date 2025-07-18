@@ -1,0 +1,11 @@
+func (a *App) setRouters() {
+	api := a.Router.Group("/api/v1")
+
+	// Amelia workflows
+	ameliaGroup := api.Group("/amelia")
+	{
+		ameliaGroup.POST("/os_stats", handler.HandleTriggerOSStats(a.AmeliaClient))
+	}
+
+	// … your other routes …
+}
