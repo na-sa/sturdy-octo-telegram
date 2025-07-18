@@ -1,11 +1,7 @@
-func (a *App) setRouters() {
-	api := a.Router.Group("/api/v1")
-
-	// Amelia workflows
-	ameliaGroup := api.Group("/amelia")
-	{
-		ameliaGroup.POST("/os_stats", handler.HandleTriggerOSStats(a.AmeliaClient))
+func NewTriggerRequest(requestType string, payload map[string]interface{}) TriggerRequest {
+	return TriggerRequest{
+		ReferenceID: fmt.Sprintf("%s_%s", requestType, uuid.NewString()),
+		RequestType: requestType,
+		Payload:     payload,
 	}
-
-	// … your other routes …
 }

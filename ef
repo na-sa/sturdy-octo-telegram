@@ -1,7 +1,0 @@
-var ameliaCfg amelia.AmeliaConfig
-if err := viper.UnmarshalKey("amelia", &ameliaCfg); err != nil {
-	logrus.Fatalf("unable to load amelia config: %v", err)
-}
-ameliaCfg.EventsURL = viper.GetString("amelia_events_url")
-
-a.AmeliaClient = amelia.NewClient(ameliaCfg)
