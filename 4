@@ -1,155 +1,104 @@
-package amelia
+// app/worker/amelia_worker.go
+package worker
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
-	"sync"
-	"time"
 
-	"golang.org/x/oauth2/clientcredentials"
+	"infinexapi/amelia"
+	"infinexapi/config"
+	"infinexapi/logging"
+
+	"github.com/google/uuid"
 )
 
-// AmeliaConfig holds your auth and request settings.
-// auth_url should be the full token endpoint (e.g. https://apiIDP-…/oauth/token).
-// events_url is the constant endpoint for firing workflows.
-type AmeliaConfig struct {
-	AuthURL      string        `mapstructure:"auth_url"`
-	ClientID     string        `mapstructure:"client_id"`
-	ClientSecret string        `mapstructure:"client_secret"`
-	TokenTTL     time.Duration `mapstructure:"token_ttl"`
-	EventsURL    string        // e.g. "https://…/amelia-automation-ingress/v1/Events"
+// OSStatsPayload holds all the fields for the “fetch_ctasks” workflow.
+type OSStatsPayload struct {
+	Author                         string   `json:"author"`
+	ConfigurationItem              string   `json:"configuration_item"`
+	RequestedBy                    string   `json:"requested_by"`
+	TemplateName                   string   `json:"template_name"`
+	Type                           string   `json:"type"`
+	PlannedStartDate               string   `json:"planned_start_date"`
+	PlannedEndDate                 string   `json:"planned_end_date"`
+	AssignmentGroupUpdateCR        string   `json:"assignment_group_update_cr"`
+	ShortDescriptionCT             string   `json:"short_description_ct"`
+	TypeCT                         string   `json:"type_ct"`
+	PlannedStartDateCT             string   `json:"planned_start_date_ct"`
+	PlannedEndDateCT               string   `json:"planned_end_date_ct"`
+	AssignmentGroupCT              string   `json:"assignment_group_ct"`
+	ConfigurationItemCT            string   `json:"configuration_item_ct"`
+	ShortDescriptionImplementation string   `json:"short_description_implementation"`
+	AssignedToCT                   string   `json:"assigned_to_ct"`
+	ConfigureLeappAdHoc            string   `json:"configure_leapp_ad_hoc"`
+	RepoPatchRelease               string   `json:"repo_patch_release"`
+	Environment                    string   `json:"environment"`
+	JobType                        string   `json:"job_type"`
+	DescriptionCT                  string   `json:"description_ct"`
+	MaxRetryCountGovernance        int      `json:"max_retry_count_governance"`
+	MaxRetryCountPlaybook          int      `json:"max_retry_count_playbook"`
+	SendEmail                      bool     `json:"send_email"`
+	Recipient                      string   `json:"recipient"`
+	AdditionalRecipient            string   `json:"additional_recipient"`
+	Sender                         string   `json:"sender"`
+	AutomationName                 string   `json:"automation_name"`
+	AssignmentGroupIncident        string   `json:"assignment_group_incident"`
+	CreateIncident                 bool     `json:"create_incident"`
+	AnsibleTemplate                string   `json:"ansible_template"`
+	ServerList                     []string `json:"server_list"`
+	AssignmentGroupInciAmelia      string   `json:"assignment_group_inci_amelia"`
+	CategoryInciAmelia             string   `json:"category_inci_amelia"`
+	ConfigurationItemInciAmelia    string   `json:"configuration_item_inci_amelia"`
+	ContactTypeInciAmelia          string   `json:"contact_type_inci_amelia"`
+	DescriptionInciAmelia          string   `json:"description_inci_amelia"`
+	ImpactedCiInciAmelia           string   `json:"impacted_ci_inci_amelia"`
+	PriorityInciAmelia             string   `json:"priority_inci_amelia"`
+	ShortDescriptionInciAmelia     string   `json:"short_description_inci_amelia"`
+	SubCategoryInciAmelia          string   `json:"sub_category_inci_amelia"`
+	SubCategoryInciAnsible         string   `json:"sub_category_inci_ansible"`
+	ShortDescriptionInciAnsible    string   `json:"short_description_inci_ansible"`
+	PriorityInciAnsible            string   `json:"priority_inci_ansible"`
+	ImpactedCiInciAnsible          string   `json:"impacted_ci_inci_ansible"`
+	ContactTypeInciAnsible         string   `json:"contact_type_inci_ansible"`
+	ConfigurationItemInciAnsible   string   `json:"configuration_item_inci_ansible"`
+	CategoryIncidentInciAnsible    string   `json:"category_incident_inci_ansible"`
+	AssignmentGroupInciAnsible     string   `json:"assignment_group_inci_ansible"`
 }
 
-// TriggerRequest is the body you send to /Events
-type TriggerRequest struct {
-	ReferenceID string                 `json:"referenceId"` // e.g. "os_stats_<uuid>"
-	RequestType string                 `json:"requestType"` // e.g. "fetch_ctasks"
-	Payload     map[string]interface{} `json:"payload" binding:"required"`
-}
-
-// AmeliaResponse captures the standard Amelia reply.
-type AmeliaResponse struct {
-	Message struct {
-		Code int    `json:"code"`
-		Type string `json:"type"`
-	} `json:"message"`
-	Data struct {
-		RequestID string `json:"requestId"`
-		TraceID   string `json:"traceId"`
-		ID        string `json:"id"`
-	} `json:"data"`
-}
-
-// Client is your lightweight Amelia API client with caching.
-type Client struct {
-	cfg     AmeliaConfig
-	http    *http.Client
-	token   string
-	expires time.Time
-	mu      sync.Mutex
-}
-
-// NewClient builds a Client that will fetch & cache tokens.
-func NewClient(cfg AmeliaConfig) *Client {
-	cc := clientcredentials.Config{
-		ClientID:     cfg.ClientID,
-		ClientSecret: cfg.ClientSecret,
-		TokenURL:     cfg.AuthURL,
-	}
-	return &Client{
-		cfg:  cfg,
-		http: cc.Client(context.Background()),
-	}
-}
-
-// getToken ensures we have a non-expired token.
-func (c *Client) getToken(ctx context.Context) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// if we still have a valid token, reuse it
-	if time.Now().Before(c.expires) && c.token != "" {
-		return c.token, nil
-	}
-
-	// fetch a fresh one
-	req, _ := http.NewRequestWithContext(ctx, "POST", c.cfg.AuthURL, bytes.NewBufferString("grant_type=client_credentials"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	// clientcredentials.Client will auto-add Basic Auth
-	resp, err := c.http.Do(req)
+// CollectOSInfoViaAmelia marshals your payload into Amelia’s envelope and fires it off.
+func CollectOSInfoViaAmelia(
+	ctx context.Context,
+	amCfg config.AmeliaConfig,
+	payload OSStatsPayload,
+) error {
+	// build client once per call (or cache globally)
+	client, err := amelia.NewClient(amCfg)
 	if err != nil {
-		return "", fmt.Errorf("amelia: token request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("amelia: token request returned %d", resp.StatusCode)
+		return fmt.Errorf("amelia.NewClient: %w", err)
 	}
 
-	var tok struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
-		return "", fmt.Errorf("amelia: token parse failed: %w", err)
-	}
-	if tok.AccessToken == "" {
-		return "", errors.New("amelia: empty access token")
-	}
-
-	c.token = tok.AccessToken
-	// use real TTL if given, else fall back to config
-	ttl := c.cfg.TokenTTL
-	if tok.ExpiresIn > 0 {
-		ttl = time.Duration(tok.ExpiresIn) * time.Second
-	}
-	c.expires = time.Now().Add(ttl - time.Second) // slack 1s
-
-	return c.token, nil
-}
-
-// Trigger fires off your workflow, returns the raw Amelia response.
-func (c *Client) Trigger(ctx context.Context, reqBody TriggerRequest) (*AmeliaResponse, error) {
-	// ensure we have a ReferenceID
-	if reqBody.ReferenceID == "" {
-		return nil, errors.New("amelia: ReferenceID required")
-	}
-
-	// get bearer token
-	token, err := c.getToken(ctx)
+	// turn struct → map[string]interface{}
+	rawBytes, err := json.Marshal(payload)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+	var rawMap map[string]interface{}
+	if err := json.Unmarshal(rawBytes, &rawMap); err != nil {
+		return fmt.Errorf("unmarshal payload map: %w", err)
 	}
 
-	// marshal JSON
-	bodyBytes, err := json.Marshal(reqBody)
+	req := amelia.TriggerRequest{
+		ReferenceID: "os_stats_" + uuid.NewString(),
+		RequestType: "fetch_ctasks",
+		Payload:     rawMap,
+	}
+
+	resp, err := client.Trigger(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("amelia: payload marshal failed: %w", err)
+		return fmt.Errorf("amelia trigger failed: %w", err)
 	}
 
-	// fire request
-	httpReq, _ := http.NewRequestWithContext(ctx, "POST", c.cfg.EventsURL, bytes.NewReader(bodyBytes))
-	httpReq.Header.Set("Authorization", "Bearer "+token)
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("amelia: trigger request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("amelia: trigger returned %d", resp.StatusCode)
-	}
-
-	var ar AmeliaResponse
-	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
-		return nil, fmt.Errorf("amelia: response parse failed: %w", err)
-	}
-	return &ar, nil
+	logging.Infof("Amelia triggered: %+v", resp)
+	return nil
 }

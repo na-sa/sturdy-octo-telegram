@@ -1,7 +1,19 @@
-func NewTriggerRequest(requestType string, payload map[string]interface{}) TriggerRequest {
-	return TriggerRequest{
-		ReferenceID: fmt.Sprintf("%s_%s", requestType, uuid.NewString()),
-		RequestType: requestType,
-		Payload:     payload,
+import (
+	"context"
+	"time"
+	"infinexapi/config"
+	"infinexapi/worker"
+)
+
+func main() {
+	ctx := context.Background()
+	amCfg := config.GetConfig().Amelia // your JSON→struct loader
+	pl := worker.OSStatsPayload{
+		Author: "you@company.com",
+		// … fill all required fields …
+		ServerList: []string{"6846137a1b92cd10f4682f8de54bcbfa"},
+	}
+	if err := worker.CollectOSInfoViaAmelia(ctx, amCfg, pl); err != nil {
+		panic(err)
 	}
 }
