@@ -1,2 +1,52 @@
-__pycache__/
-*.py[cod]
+@echo off
+REM ─────────── Logging Setup ───────────
+set LOG_FILE=build_log.txt
+echo ============================ >> %LOG_FILE%
+echo Build started at %date% %time% >> %LOG_FILE%
+echo. >> %LOG_FILE%
+
+REM ─────────── Main Build ───────────
+call :main >> %LOG_FILE% 2>&1
+
+REM ─────────── Footer ───────────
+echo Build finished at %date% %time% >> %LOG_FILE%
+echo ============================ >> %LOG_FILE%
+echo. >> %LOG_FILE%
+exit /b
+
+:main
+REM === Adjust these ===
+set GOOS=linux
+set GOARCH=amd64
+set OUTPUT_DIR=build
+set BINARY_NAME=infx-kafka-ipu-sync-cd      REM ← your binary name
+set DEST_DIR=C:\Deployments\INFX-Kafka-Sync REM ← where to copy your artifacts
+
+REM Clean previous build
+if exist %OUTPUT_DIR% rmdir /s /q %OUTPUT_DIR%
+mkdir %OUTPUT_DIR%
+
+REM Compile
+echo Building %BINARY_NAME% for %GOOS%/%GOARCH%...
+go build -o %OUTPUT_DIR%\%BINARY_NAME% main.go
+
+REM Check for errors
+if %errorlevel% neq 0 (
+  echo ERROR: Build failed!
+  exit /b %errorlevel%
+)
+
+REM Success
+echo Build successful! Binary: %OUTPUT_DIR%\%BINARY_NAME%
+
+REM (Optional) Compress
+echo Compressing to %BINARY_NAME%.tar.gz...
+tar -czf %OUTPUT_DIR%\%BINARY_NAME%.tar.gz -C %OUTPUT_DIR% %BINARY_NAME%
+
+REM Copy to destination
+echo Copying build output to %DEST_DIR%...
+if not exist "%DEST_DIR%" mkdir "%DEST_DIR%"
+xcopy /y /i %OUTPUT_DIR%\* "%DEST_DIR%\"
+
+echo Build & packaging complete.
+exit /b
