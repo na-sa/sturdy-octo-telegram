@@ -1,0 +1,18 @@
+import (
+    "golang.org/x/oauth2/clientcredentials"
+    "golang.org/x/oauth2"
+)
+
+conf := clientcredentials.Config{
+    ClientID:     strings.TrimSpace(c.cfg.ClientID),
+    ClientSecret: strings.TrimSpace(c.cfg.ClientSecret),
+    TokenURL:     strings.TrimSpace(c.cfg.AuthURL),
+    Scopes:       []string{""},                 // empty scope
+    AuthStyle:    oauth2.AuthStyleInHeader,     // force header extraction
+}
+
+token, err := conf.Token(ctx)
+if err != nil {
+    return "", err
+}
+return token.AccessToken, nil
