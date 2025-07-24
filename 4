@@ -1,79 +1,99 @@
-package wfoauth
+package amelia
 
 import (
 	"context"
-	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
-// TokenResponse matches Wells Fargo’s JSON.
-type TokenResponse struct {
-	TokenType   string `json:"token_type"`
-	AccessToken string `json:"access_token"`
-	ExpiresIn   int64  `json:"expires_in"`
-	Scope       string `json:"scope"`
-	IssuedAt    int64  `json:"issued_at"`
+// Config holds your OAuth2 settings.
+type Config struct {
+	AuthURL      string // e.g. "https://apiIDP-nonprod.wellsfargo.net/oauth/token"
+	ClientID     string
+	ClientSecret string
 }
 
-// FetchToken performs the client‑credentials flow.
-//
-//   ctx         – caller’s context (supports timeout / cancel)
-//   authURL     – e.g. "https://apiIDP‑nonprod.wellsfargo.net/oauth/token"
-//   clientID    – string from onboarding portal
-//   clientSecret– companion secret
-//
-// It returns the decoded JSON plus raw HTTP status/error text.
-func FetchToken(ctx context.Context, authURL, clientID, clientSecret string) (*TokenResponse, *http.Response, error) {
-	// 1) Sanitise creds (trim trailing newline/CR from env files)
-	clientID = strings.TrimSpace(clientID)
-	clientSecret = strings.TrimSpace(clientSecret)
+// AmeliaClient wraps the config, an HTTP client, and token cache.
+type AmeliaClient struct {
+	cfg     Config
+	client  *http.Client // ← Added this field!
+	mu      sync.Mutex
+	token   string
+	expires time.Time
+}
 
-	if clientID == "" || clientSecret == "" {
-		return nil, nil, errors.New("clientID or clientSecret empty after trim")
+// New builds an AmeliaClient. Pass nil for httpClient to get a default 15s timeout.
+func New(cfg Config, httpClient *http.Client) *AmeliaClient {
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 15 * time.Second}
+	}
+	return &AmeliaClient{
+		cfg:    cfg,
+		client: httpClient,
+	}
+}
+
+// getToken ensures we have a non‑expired token, or fetches a new one.
+func (c *AmeliaClient) getToken(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// 1) Reuse cached token if still valid
+	if time.Now().Before(c.expires) && c.token != "" {
+		return c.token, nil
 	}
 
-	// 2) Build body exactly the way Postman does
+	// 2) Trim and validate credentials
+	clientID := strings.TrimSpace(c.cfg.ClientID)
+	clientSecret := strings.TrimSpace(c.cfg.ClientSecret)
+	if clientID == "" || clientSecret == "" {
+		return "", errors.New("clientID or clientSecret empty after trim")
+	}
+
+	// 3) Build the form body (including empty scope)
 	form := url.Values{}
 	form.Set("grant_type", "client_credentials")
-	body := strings.NewReader(form.Encode())
+	form.Set("scope", "") // Apigee often expects a scope param, even if empty
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, authURL, body)
+	// 4) Create the HTTP request
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.AuthURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, nil, err
+		return "", fmt.Errorf("creating token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	req.SetBasicAuth(clientID, clientSecret) // single, canonical Basic header
 
-	// 3) Add a SINGLE Basic‑Auth header
-	basic := base64.StdEncoding.EncodeToString([]byte(clientID + ":" + clientSecret))
-	req.Header.Set("Authorization", "Basic "+basic)
-
-	// 4) Choose your own http.Client so nothing else injects another header
-	httpClient := &http.Client{
-		Timeout: 15 * time.Second,
-	}
-
-	resp, err := httpClient.Do(req)
+	// 5) Send and check status
+	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return "", fmt.Errorf("performing token request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// 5) Read full body for debugging on non‑200s
-	rawBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, resp, errors.New("token endpoint returned " + resp.Status)
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("token request failed: %d %s", resp.StatusCode, string(body))
 	}
 
-	// 6) Decode JSON
-	var tr TokenResponse
-	if err := json.Unmarshal(rawBody, &tr); err != nil {
-		return nil, resp, err
+	// 6) Decode the JSON
+	var tr struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int64  `json:"expires_in"`
 	}
-	return &tr, resp, nil
+	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+		return "", fmt.Errorf("decoding token response: %w", err)
+	}
+
+	// 7) Cache and return
+	c.token = tr.AccessToken
+	c.expires = time.Now().Add(time.Duration(tr.ExpiresIn-10) * time.Second) // subtract a bit for safety
+	return c.token, nil
 }
