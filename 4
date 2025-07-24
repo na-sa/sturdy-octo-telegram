@@ -1,78 +1,103 @@
 package amelia
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"golang.org/x/oauth2/clientcredentials"
 )
 
-// Config holds your OAuth2 settings.
-type Config struct {
-	AuthURL      string // e.g. "https://apiIDP-nonprod.wellsfargo.net/oauth/token"
-	ClientID     string
-	ClientSecret string
+// AmeliaConfig holds your auth and request settings.
+type AmeliaConfig struct {
+	AuthURL      string        `mapstructure:"auth_url"` // e.g. https://apiIDP-…/oauth/token
+	ClientID     string        `mapstructure:"client_id"`
+	ClientSecret string        `mapstructure:"client_secret"`
+	TokenTTL     time.Duration `mapstructure:"token_ttl"`  // fallback TTL if expires_in is missing
+	EventsURL    string        `mapstructure:"events_url"` // your /Events endpoint
 }
 
-// AmeliaClient wraps the config, an HTTP client, and token cache.
+// TriggerRequest is the JSON body you send to /Events.
+type TriggerRequest struct {
+	ReferenceID string                 `json:"referenceId" binding:"required"`
+	RequestType string                 `json:"requestType"`
+	Payload     map[string]interface{} `json:"payload" binding:"required"`
+}
+
+// AmeliaResponse captures the standard Amelia reply.
+type AmeliaResponse struct {
+	Message struct {
+		Code int    `json:"code"`
+		Type string `json:"type"`
+	} `json:"message"`
+	Data struct {
+		RequestID string `json:"requestId"`
+		TraceID   string `json:"traceId"`
+		ID        string `json:"id"`
+	} `json:"data"`
+}
+
+// AmeliaClient wraps config, an HTTP client, and a token cache.
 type AmeliaClient struct {
-	cfg     Config
-	client  *http.Client // ← Added this field!
-	mu      sync.Mutex
+	cfg     AmeliaConfig
+	http    *http.Client // ← your HTTP client
 	token   string
 	expires time.Time
+	mu      sync.Mutex
 }
 
-// New builds an AmeliaClient. Pass nil for httpClient to get a default 15s timeout.
-func New(cfg Config, httpClient *http.Client) *AmeliaClient {
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 15 * time.Second}
+// NewClient builds a Client that will fetch & cache tokens.
+// Pass nil for http.Client to use the default 15s‑timeout client.
+func NewClient(cfg AmeliaConfig) *AmeliaClient {
+	// OAuth2 client‑credentials helper
+	cc := clientcredentials.Config{
+		ClientID:     strings.TrimSpace(cfg.ClientID),
+		ClientSecret: strings.TrimSpace(cfg.ClientSecret),
+		TokenURL:     strings.TrimSpace(cfg.AuthURL),
+		Scopes:       []string{""}, // include an empty scope param
+		AuthStyle:    0,            // AuthStyleInHeader (default)
 	}
+	log.Printf("Amelia OAuth2 config: %#v", cc)
 	return &AmeliaClient{
-		cfg:    cfg,
-		client: httpClient,
+		cfg:  cfg,
+		http: cc.Client(context.Background()),
 	}
 }
 
-// getToken ensures we have a non‑expired token, or fetches a new one.
+// getToken ensures we have a non‑expired token or fetches a new one.
 func (c *AmeliaClient) getToken(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// 1) Reuse cached token if still valid
+	// Reuse cached token if still valid
 	if time.Now().Before(c.expires) && c.token != "" {
 		return c.token, nil
 	}
 
-	// 2) Trim and validate credentials
-	clientID := strings.TrimSpace(c.cfg.ClientID)
-	clientSecret := strings.TrimSpace(c.cfg.ClientSecret)
-	if clientID == "" || clientSecret == "" {
-		return "", errors.New("clientID or clientSecret empty after trim")
-	}
-
-	// 3) Build the form body (including empty scope)
+	// Build the form
 	form := url.Values{}
 	form.Set("grant_type", "client_credentials")
-	form.Set("scope", "") // Apigee often expects a scope param, even if empty
+	form.Set("scope", "") // satisfy Apigee policy
 
-	// 4) Create the HTTP request
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.AuthURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", fmt.Errorf("creating token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	req.SetBasicAuth(clientID, clientSecret) // single, canonical Basic header
+	req.SetBasicAuth(strings.TrimSpace(c.cfg.ClientID), strings.TrimSpace(c.cfg.ClientSecret))
 
-	// 5) Send and check status
-	resp, err := c.client.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("performing token request: %w", err)
 	}
@@ -83,7 +108,6 @@ func (c *AmeliaClient) getToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("token request failed: %d %s", resp.StatusCode, string(body))
 	}
 
-	// 6) Decode the JSON
 	var tr struct {
 		AccessToken string `json:"access_token"`
 		ExpiresIn   int64  `json:"expires_in"`
@@ -92,8 +116,62 @@ func (c *AmeliaClient) getToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("decoding token response: %w", err)
 	}
 
-	// 7) Cache and return
+	// Cache it
 	c.token = tr.AccessToken
-	c.expires = time.Now().Add(time.Duration(tr.ExpiresIn-10) * time.Second) // subtract a bit for safety
+	ttl := c.cfg.TokenTTL
+	if tr.ExpiresIn > 0 {
+		ttl = time.Duration(tr.ExpiresIn) * time.Second
+	}
+	// expire a second early to avoid edge‑of‑expiry
+	c.expires = time.Now().Add(ttl - time.Second)
+
 	return c.token, nil
+}
+
+// Trigger fires off your workflow and returns the AmeliaResponse.
+func (c *AmeliaClient) Trigger(ctx context.Context, reqBody TriggerRequest) (*AmeliaResponse, error) {
+	if reqBody.ReferenceID == "" {
+		return nil, errors.New("amelia: ReferenceID required")
+	}
+	token, err := c.getToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("amelia: payload marshal failed: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.EventsURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("creating trigger request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("amelia: trigger request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("amelia: trigger returned %d", resp.StatusCode)
+	}
+
+	var ar AmeliaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
+		return nil, fmt.Errorf("amelia: response parse failed: %w", err)
+	}
+	return &ar, nil
+}
+
+// NewTriggerRequest builds a TriggerRequest with a unique ReferenceID.
+func NewTriggerRequest(requestType string, payload map[string]interface{}) TriggerRequest {
+	return TriggerRequest{
+		ReferenceID: fmt.Sprintf("%s_%s", requestType, uuid.NewString()),
+		RequestType: requestType,
+		Payload:     payload,
+	}
 }
