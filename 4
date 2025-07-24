@@ -1,96 +1,71 @@
+// infinexapi/worker/amelia_worker.go
 package worker
 
 import (
-	"context"
-	"fmt"
-	"time"
-
-	"infinexapi/amelia"
-
-	"github.com/google/uuid"
+    "context"
+    "fmt"
+    "github.com/google/uuid"
+    "infinexapi/amelia"
 )
 
-// RunOSStatCollectionJob builds the hard‑coded payload and triggers Amelia.
-func RunOSStatCollectionJob(ctx context.Context) error {
-	// 1) Build your AmeliaConfig (adjust these values or pull from env/config)
-	amCfg := amelia.AmeliaConfig{
-		AuthURL:      "https://apiIDP-nonprod.wellsfargo.net/oauth/token",
-		ClientID:     "HV8CM2fISAvO0egRu8ALhms3GeR8zoUi",
-		ClientSecret: "xTYdc1JqmzkGme41",
-		TokenTTL:     5 * time.Minute, // fallback
-		EventsURL:    "https://apigw-uat.wellsfargo.net/OFA/FA/laC/amelia-automation-ingress/v1/Events",
-	}
+// RunOSStatCollectionJob fires off the OS stats workflow in Amelia.
+// It now accepts an existing AmeliaClient instead of building one internally.
+func RunOSStatCollectionJob(ctx context.Context, client *amelia.AmeliaClient) error {
+    // Hard‑coded payload
+    payload := map[string]interface{}{ 
+        "author":                           "Siddhi.Bhardwaj@wellsfargo.com",
+        "configuration_item":               "Ilhcev4150g310u",
+        "requested_by":                     "Siddhi.Bhardwaj",
+        "template_name":                    "UNIX Server Access Control - FHO Unix Maintenance Teams",
+        "type":                             "prechecks2",
+        "planned_start_date":               "2025-06-26T13:39:46.384Z",
+        "planned_end_date":                 "2025-06-26T13:59:46.384Z",
+        // ... (rest of your fields) ...
+    }
 
-	// 2) Create the client
-	client := amelia.NewClient(amCfg)
+    // Build the Amelia trigger request
+    req := amelia.TriggerRequest{
+        ReferenceID: fmt.Sprintf("os_stats_%s", uuid.NewString()),
+        RequestType: "fetch_ctasks",
+        Payload:     payload,
+    }
 
-	// 3) Hard‑coded payload
-	payload := map[string]interface{}{
-		"author":                           "Siddhi.Bhardwaj@wellsfargo.com",
-		"configuration_item":               "Ilhcev4150g310u",
-		"requested_by":                     "Siddhi.Bhardwaj",
-		"template_name":                    "UNIX Server Access Control - FHO Unix Maintenance Teams",
-		"type":                             "prechecks2",
-		"planned_start_date":               "2025-06-26T13:39:46.384Z",
-		"planned_end_date":                 "2025-06-26T13:59:46.384Z",
-		"assignment_group_update_cr":       "FTI-Compute-Linux-OSEngineering",
-		"short_description_ct":             "Collect OS Info for IPU scheduled servers testing..",
-		"type_ct":                          "Planning",
-		"planned_start_date_ct":            "2025-06-26T13:39:46.384Z",
-		"planned_end_date_ct":              "2025-06-26T13:59:46.384Z",
-		"assignment_group_ct":              "FTI-Compute-Linux-OSEngineering",
-		"configuration_item_ct":            "Ilhcev4150g310u",
-		"short_description_implementation": "Run Collect OS info implementation",
-		"assigned_to_ct":                   "Gary Davis",
-		"configure_leapp_ad_hoc":           "true",
-		"repo_patch_release":               "2025_23",
-		"environment":                      "uat",
-		"job_type":                         "job_templates",
-		"description_ct":                   "testingg..",
-		"max_retry_count_governance":       30,
-		"max_retry_count_playbook":         60,
-		"send_email":                       "true",
-		"recipient":                        "Siddhi.Bhardwaj@wellsfargo.com",
-		"additional_recipient":             "Siddhi.Bhardwaj@wellsfargo.com",
-		"sender":                           "Siddhi.Bhardwaj@wellsfargo.com",
-		"automation_name":                  "prechecks",
-		"assignment_group_incident":        "FTI-Compute-Linux-OSEngineering",
-		"create_incident":                  "true",
-		"ansible_template":                 "IMP-NonApp-IMP-Excalibur-stat_collection_onewfqa",
-		"server_list":                      "6846137a1b92cd10f4682f8de54bcbfa",
-		"assignment_group_inci_amelia":     "FTI-Compute-Linux-OSEngineering",
-		"category_inci_amelia":             "technology performance",
-		"configuration_item_inci_amelia":   "Ilhcev4150g310u",
-		"contact_type_inci_amelia":         "Monitoring",
-		"description_inci_amelia":          "Error occurred in Amelia description",
-		"impacted_ci_inci_amelia":          "Enterprise Incident Management Service",
-		"priority_inci_amelia":             "P3",
-		"short_description_inci_amelia":    "Error occurred in Amelia",
-		"sub_category_inci_amelia":         "down/unreachable",
-		"sub_category_inci_ansible":        "down/unreachable",
-		"short_description_inci_ansible":   "Error occurred in Ansible",
-		"priority_inci_ansible":            "P3",
-		"impacted_ci_inci_ansible":         "Enterprise Incident Management Service",
-		"contact_type_inci_ansible":        "Monitoring",
-		"configuration_item_inci_ansible":  "Ilhcev4150g310u",
-		"category_incident_inci_ansible":   "technology performance",
-		"assignment_group_inci_ansible":    "FTI-Compute-Linux-OSEngineering",
-	}
+    // Fire the request
+    resp, err := client.Trigger(ctx, req)
+    if err != nil {
+        return fmt.Errorf("amelia trigger failed: %w", err)
+    }
 
-	// 4) Wrap it in a TriggerRequest
-	req := amelia.TriggerRequest{
-		ReferenceID: "os_stats_" + uuid.NewString(),
-		RequestType: "fetch_ctasks",
-		Payload:     payload,
-	}
+    fmt.Printf("✅ Amelia triggered: %+v\n", resp)
+    return nil
+}
 
-	// 5) Fire the trigger
-	resp, err := client.Trigger(ctx, req)
-	if err != nil {
-		return fmt.Errorf("amelia trigger failed: %w", err)
-	}
+// infinexapi/main.go (example invocation)
+package main
 
-	// 6) Log or return as needed
-	fmt.Printf("Amelia triggered: %+v\n", resp)
-	return nil
+import (
+    "context"
+    "log"
+    "infinexapi/amelia"
+    "infinexapi/worker"
+    "time"
+)
+
+func main() {
+    // 1) Configure Amelia client
+    amCfg := amelia.AmeliaConfig{
+        AuthURL:      "https://apiIDP-nonprod.wellsfargo.net/oauth/token",
+        ClientID:     "HV8CM2fISAvO0egRu8ALhms3GeR8zoUi",
+        ClientSecret: "xTYdc1JqmzkGme41",
+        TokenTTL:     5 * time.Minute,
+        EventsURL:    "https://apigw-uat.wellsfargo.net/OFA/FA/laC/amelia-automation-ingress/v1/Events",
+    }
+    client := amelia.NewClient(amCfg)
+
+    // 2) Execute the hard‑coded OS stats job
+    ctx := context.Background()
+    if err := worker.RunOSStatCollectionJob(ctx, client); err != nil {
+        log.Fatalf("❌ OS stats job failed: %v", err)
+    }
+    log.Println("✅ OS stats job triggered successfully")
 }
