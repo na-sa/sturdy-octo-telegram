@@ -1,177 +1,56 @@
-package amelia
-
-import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"net/url"
-	"strings"
-	"sync"
-	"time"
-
-	"github.com/google/uuid"
-	"golang.org/x/oauth2/clientcredentials"
-)
-
-// AmeliaConfig holds your auth and request settings.
-type AmeliaConfig struct {
-	AuthURL      string        `mapstructure:"auth_url"` // e.g. https://apiIDP-…/oauth/token
-	ClientID     string        `mapstructure:"client_id"`
-	ClientSecret string        `mapstructure:"client_secret"`
-	TokenTTL     time.Duration `mapstructure:"token_ttl"`  // fallback TTL if expires_in is missing
-	EventsURL    string        `mapstructure:"events_url"` // your /Events endpoint
-}
-
-// TriggerRequest is the JSON body you send to /Events.
-type TriggerRequest struct {
-	ReferenceID string                 `json:"referenceId" binding:"required"`
-	RequestType string                 `json:"requestType"`
-	Payload     map[string]interface{} `json:"payload" binding:"required"`
-}
-
-// AmeliaResponse captures the standard Amelia reply.
-type AmeliaResponse struct {
-	Message struct {
-		Code int    `json:"code"`
-		Type string `json:"type"`
-	} `json:"message"`
-	Data struct {
-		RequestID string `json:"requestId"`
-		TraceID   string `json:"traceId"`
-		ID        string `json:"id"`
-	} `json:"data"`
-}
-
-// AmeliaClient wraps config, an HTTP client, and a token cache.
-type AmeliaClient struct {
-	cfg     AmeliaConfig
-	http    *http.Client // ← your HTTP client
-	token   string
-	expires time.Time
-	mu      sync.Mutex
-}
-
-// NewClient builds a Client that will fetch & cache tokens.
-// Pass nil for http.Client to use the default 15s‑timeout client.
-func NewClient(cfg AmeliaConfig) *AmeliaClient {
-	// OAuth2 client‑credentials helper
-	cc := clientcredentials.Config{
-		ClientID:     strings.TrimSpace(cfg.ClientID),
-		ClientSecret: strings.TrimSpace(cfg.ClientSecret),
-		TokenURL:     strings.TrimSpace(cfg.AuthURL),
-		Scopes:       []string{""}, // include an empty scope param
-		AuthStyle:    0,            // AuthStyleInHeader (default)
-	}
-	log.Printf("Amelia OAuth2 config: %#v", cc)
-	return &AmeliaClient{
-		cfg:  cfg,
-		http: cc.Client(context.Background()),
-	}
-}
-
-// getToken ensures we have a non‑expired token or fetches a new one.
-func (c *AmeliaClient) getToken(ctx context.Context) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Reuse cached token if still valid
-	if time.Now().Before(c.expires) && c.token != "" {
-		return c.token, nil
-	}
-
-	// Build the form
-	form := url.Values{}
-	form.Set("grant_type", "client_credentials")
-	form.Set("scope", "") // satisfy Apigee policy
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.AuthURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", fmt.Errorf("creating token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	req.SetBasicAuth(strings.TrimSpace(c.cfg.ClientID), strings.TrimSpace(c.cfg.ClientSecret))
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("performing token request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("token request failed: %d %s", resp.StatusCode, string(body))
-	}
-
-	var tr struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int64  `json:"expires_in"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
-		return "", fmt.Errorf("decoding token response: %w", err)
-	}
-
-	// Cache it
-	c.token = tr.AccessToken
-	ttl := c.cfg.TokenTTL
-	if tr.ExpiresIn > 0 {
-		ttl = time.Duration(tr.ExpiresIn) * time.Second
-	}
-	// expire a second early to avoid edge‑of‑expiry
-	c.expires = time.Now().Add(ttl - time.Second)
-
-	return c.token, nil
-}
-
 // Trigger fires off your workflow and returns the AmeliaResponse.
 func (c *AmeliaClient) Trigger(ctx context.Context, reqBody TriggerRequest) (*AmeliaResponse, error) {
+	// 1) Ensure ReferenceID
 	if reqBody.ReferenceID == "" {
 		return nil, errors.New("amelia: ReferenceID required")
 	}
+
+	// 2) Get a valid bearer token
 	token, err := c.getToken(ctx)
 	if err != nil {
 		return nil, err
 	}
 
+	// 3) Marshal the JSON payload
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("amelia: payload marshal failed: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.EventsURL, bytes.NewReader(bodyBytes))
+	// 4) Build the HTTP request
+	httpReq, err := http.NewRequestWithContext(ctx,
+		http.MethodPost,
+		c.cfg.EventsURL,
+		bytes.NewReader(bodyBytes),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("creating trigger request: %w", err)
 	}
+
+	// 5) Mirror Postman’s headers exactly
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("X-Amelia-DomainCode", "linuxoseng")
+	httpReq.Header.Set("X-Amelia-ClientKey", "6163ad0f20b54ac18e8d18a8280243961722950538D7Kum4")
 
-	resp, err := c.http.Do(httpReq)
+	// 6) Send via the plain DefaultClient (no extra OAuth magic)
+	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("amelia: trigger request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	// 7) Check status
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("amelia: trigger returned %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("amelia: trigger returned %d %s", resp.StatusCode, string(body))
 	}
 
+	// 8) Decode the JSON response
 	var ar AmeliaResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
 		return nil, fmt.Errorf("amelia: response parse failed: %w", err)
 	}
 	return &ar, nil
-}
-
-// NewTriggerRequest builds a TriggerRequest with a unique ReferenceID.
-func NewTriggerRequest(requestType string, payload map[string]interface{}) TriggerRequest {
-	return TriggerRequest{
-		ReferenceID: fmt.Sprintf("%s_%s", requestType, uuid.NewString()),
-		RequestType: requestType,
-		Payload:     payload,
-	}
 }
